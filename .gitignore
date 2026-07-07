@@ -1,0 +1,22 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+
+# local test fixtures — real church files must NOT be committed (privacy)
+.local-fixtures/
+
+# editor / OS
+.DS_Store
+*.log
+.vite/
+
+# TypeScript incremental build cache
+*.tsbuildinfo
+
+# local Claude Code permissions (machine-specific)
+.claude/settings.local.json
+
+# temp preview fixture
+public/__sample.proPlaylist
