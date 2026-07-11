@@ -148,6 +148,8 @@ export default function App() {
                   <>
                     将修改 <strong className="text-indigo-600">{preview.length}</strong> 个文本框
                   </>
+                ) : (config.selectedFiles?.length ?? 0) === 0 ? (
+                  '请先在上方勾选要处理的篇目（如宣召、读经）'
                 ) : (
                   '当前设置下没有需要修改的内容'
                 )}

@@ -67,3 +67,28 @@ export function readRtfSizes(rtf: string): number[] {
   for (const m of rtf.matchAll(/\\fs(\d+)/g)) out.add(parseInt(m[1], 10) / 2)
   return [...out].sort((a, b) => a - b)
 }
+
+/**
+ * Best-effort plain text of a text box's RTF, for identifying slides in the UI
+ * (e.g. spotting the presentation whose text contains "宣召"). Not a full RTF
+ * parser — it strips the font/color tables, unescapes `\uN` code points, drops
+ * remaining control words/symbols, and collapses whitespace. ProPresenter
+ * stores CJK as literal UTF-8, so most content survives verbatim.
+ */
+export function rtfPlainText(rtf: string): string {
+  let s = rtf
+  // Drop the font table group (may hold font names that aren't slide text).
+  const span = findFontTable(s)
+  if (span) s = s.slice(0, span[0]) + ' ' + s.slice(span[1] + 1)
+  // Drop simple color/stylesheet/destination groups (non-nested).
+  s = s.replace(/\{\\(?:colortbl|stylesheet|\*)[^{}]*\}/g, ' ')
+  // \uN unicode escapes -> the character (with optional skip char after).
+  s = s.replace(/\\u(-?\d+)\s?\??/g, (_m, n: string) => String.fromCharCode((parseInt(n, 10) + 0x10000) % 0x10000))
+  // \'hh hex escapes -> byte (best effort; usually legacy single-byte).
+  s = s.replace(/\\'([0-9a-fA-F]{2})/g, (_m, h: string) => String.fromCharCode(parseInt(h, 16)))
+  // Remaining control words (\word, optional numeric arg) and control symbols.
+  s = s.replace(/\\[a-zA-Z]+-?\d*\s?/g, ' ').replace(/\\[^a-zA-Z]/g, ' ')
+  // Braces and RTF field noise.
+  s = s.replace(/[{}]/g, ' ')
+  return s.replace(/\s+/g, ' ').trim()
+}

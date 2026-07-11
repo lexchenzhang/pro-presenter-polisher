@@ -7,7 +7,7 @@
 // slides" logic so the preview and the applied fix never disagree.
 
 import { canonicalFamily, type FontOption } from './fonts'
-import { boxSize, boxFont, type ProDoc, type TextBox } from './proDoc'
+import { boxSize, boxFont, boxText, type ProDoc, type TextBox } from './proDoc'
 
 export interface FileEntry {
   name: string
@@ -45,6 +45,17 @@ export interface BoxRow {
   issues: IssueKind[]
 }
 
+/** One .pro document, summarized for the presentation picker. */
+export interface PresentationInfo {
+  /** zip entry name — the stable key used by FixConfig.selectedFiles */
+  file: string
+  /** the presentation's own name (field 3), falls back to the entry name */
+  name: string
+  contentBoxes: number
+  /** short readable slide-text snippet (helps spot 宣召/读经 when the name doesn't) */
+  preview: string
+}
+
 export interface PlaylistReport {
   files: number
   contentBoxes: number
@@ -57,18 +68,26 @@ export interface PlaylistReport {
   sizeIssues: number
   metaIssues: number
   rows: BoxRow[]
+  /** per-document summary, in archive order, for the picker */
+  presentations: PresentationInfo[]
 }
 
 export interface FixConfig {
   /** which PostScript font names count as "content" to normalize */
   sourcePsNames: string[]
-  /** remap the content font to a Mac font */
+  /** remap the content font to the target font */
   remapFont: boolean
   targetFont: FontOption
   /** canonicalize the family-name field even when keeping the original font */
   fixFamilyMeta: boolean
   sizePolicy: SizePolicy
   globalSize: number
+  /**
+   * Zip entry names of the presentations to process. Only these documents are
+   * touched. `undefined` = every document (used by tests / batch callers); an
+   * empty array = none.
+   */
+  selectedFiles?: string[]
 }
 
 export interface FixEdit {
@@ -163,12 +182,19 @@ export function analyze(
   const rows: BoxRow[] = []
   const contentFontCounts = new Map<string, { ps: string; family: string; count: number }>()
   const allSizes = new Set<number>()
+  const presentations: PresentationInfo[] = []
   let contentBoxes = 0
   let labelBoxes = 0
   let sizeIssues = 0
   let metaIssues = 0
 
   for (const { name, doc } of files) {
+    presentations.push({
+      file: name,
+      name: doc.name || name.replace(/\.pro$/, ''),
+      contentBoxes: doc.boxes.filter((b) => b.role === 'content').length,
+      preview: presentationPreview(doc),
+    })
     const modes = policy === 'keep' ? null : groupModes(doc, sourceSet, policy)
     doc.boxes.forEach((box, index) => {
       const primary = boxFont(box)
@@ -225,7 +251,21 @@ export function analyze(
     sizeIssues,
     metaIssues,
     rows,
+    presentations,
   }
+}
+
+/** A short readable snippet of a document's slide text, for the picker. */
+function presentationPreview(doc: ProDoc): string {
+  const parts: string[] = []
+  for (const box of doc.boxes) {
+    if (box.role !== 'content') continue
+    const t = boxText(box).trim()
+    if (t) parts.push(t)
+    if (parts.join(' ').length >= 40) break
+  }
+  const joined = parts.join(' · ')
+  return joined.length > 40 ? joined.slice(0, 40) + '…' : joined
 }
 
 // ---------------------------------------------------------------------------
@@ -234,9 +274,12 @@ export function analyze(
 
 export function buildPlan(files: FileEntry[], config: FixConfig): FixEdit[] {
   const sourceSet = new Set(config.sourcePsNames)
+  // `undefined` selection = every document; otherwise only the named entries.
+  const selected = config.selectedFiles ? new Set(config.selectedFiles) : null
   const edits: FixEdit[] = []
 
   for (const { name, doc } of files) {
+    if (selected && !selected.has(name)) continue
     const modes =
       config.sizePolicy === 'file-mode' || config.sizePolicy === 'box-group'
         ? groupModes(doc, sourceSet, config.sizePolicy)
@@ -248,21 +291,30 @@ export function buildPlan(files: FileEntry[], config: FixConfig): FixEdit[] {
       const curSize = boxSize(box)
       // the box's own fonts that are in the source set — the edit touches only these
       const fromNames = [...new Set(box.descriptors.map((d) => d.ps).filter((ps) => sourceSet.has(ps)))]
+      // Representative *source* run (the edit only ever touches source runs).
+      // Drives the swap-vs-meta decision and the shown diff, so the outcome
+      // doesn't depend on which descriptor happens to be first in a mixed box.
+      const src = box.descriptors.find((d) => sourceSet.has(d.ps)) ?? primary
 
       // --- font ---
       let setFont: FontOption | null = null
       let fixMeta = false
-      let afterPs = primary.ps
-      let afterFamily = primary.family
-      let afterStyle = primary.style
-      if (config.remapFont && primary.ps !== config.targetFont.ps) {
+      let afterPs = src.ps
+      let afterFamily = src.family
+      let afterStyle = src.style
+      // A font swap is only warranted when a source run's font actually differs
+      // from the target. When every source run already uses the target ps, take
+      // the metadata path instead — the swap path would also rewrite `style`
+      // from the target's (possibly guessed) value.
+      const needsSwap = fromNames.some((ps) => ps !== config.targetFont.ps)
+      if (config.remapFont && needsSwap) {
         setFont = config.targetFont
         afterPs = config.targetFont.ps
         afterFamily = config.targetFont.family
         afterStyle = config.targetFont.style
       } else if (config.fixFamilyMeta) {
-        const canonical = canonicalFamily(primary.ps, primary.family)
-        if (canonical !== primary.family) {
+        const canonical = canonicalFamily(src.ps, src.family)
+        if (canonical !== src.family) {
           fixMeta = true
           afterFamily = canonical
         }
@@ -290,7 +342,7 @@ export function buildPlan(files: FileEntry[], config: FixConfig): FixEdit[] {
           index,
           box,
           fromNames,
-          before: { ps: primary.ps, family: primary.family, style: primary.style, size: curSize },
+          before: { ps: src.ps, family: src.family, style: src.style, size: curSize },
           after: { ps: afterPs, family: afterFamily, style: afterStyle, size: afterSize },
           setFont,
           fixMeta,

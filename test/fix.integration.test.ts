@@ -44,16 +44,16 @@ maybe('end-to-end fix', () => {
     }
   })
 
-  it('applies the default fix and produces a valid, normalized playlist', async () => {
+  it('applies the default fix to selected presentations and normalizes the brand font', async () => {
     const raw = readFileSync(playlistPath!)
     const before = await proEntries(raw)
 
-    // analyze + fix
+    // analyze + fix — select EVERY presentation to exercise the full normalize.
     const pl = await loadPlaylist(new Uint8Array(raw), 'test.proPlaylist')
     const { files, failed } = await buildDocs(pl)
     expect(failed).toEqual([])
     const report = analyze(files)
-    const config = defaultConfig(report)
+    const config = { ...defaultConfig(report), selectedFiles: files.map((f) => f.name) }
     const { buildPlan } = await import('../src/lib/analyzer')
     const plan = buildPlan(files, config)
     expect(plan.length).toBeGreaterThan(0)
@@ -86,19 +86,20 @@ maybe('end-to-end fix', () => {
       outFiles.push({ name, doc: new ProDoc(bytes) })
     }
 
-    // 4) re-analyze the OUTPUT
+    // 4) re-analyze the OUTPUT. The brand font's PostScript name is unchanged
+    // (target ps == source ps), so it is still present — but its family
+    // metadata is now the canonical display name everywhere and clean.
     const after2 = analyze(outFiles)
-    // no brand font left on any content box; metadata clean
-    const tensentypeLeft = after2.rows.filter(
+    const brand = after2.rows.filter(
       (r) => r.role === 'content' && r.ps === 'Tensentype-RuiHeiJ-W4',
-    ).length
-    expect(tensentypeLeft).toBe(0)
+    )
+    expect(brand.length).toBeGreaterThan(0)
+    for (const r of brand) {
+      expect(r.family, `family not normalized in ${r.file}#${r.index}`).toBe(
+        'Tensentype RuiHei GB18030 W4',
+      )
+    }
     expect(after2.metaIssues).toBe(0)
-    // target font present on content
-    const pingfang = after2.rows.filter(
-      (r) => r.role === 'content' && r.ps === config.targetFont.ps,
-    ).length
-    expect(pingfang).toBeGreaterThan(0)
 
     // 4b) multi-font RTF tables keep their non-target entries (the blocking-bug guard):
     // any fallback font present in the input must still be present in the output.
@@ -121,7 +122,47 @@ maybe('end-to-end fix', () => {
 
     // eslint-disable-next-line no-console
     console.log(
-      `fixed ${updated.size} files, ${plan.length} boxes remapped -> ${config.targetFont.ps}; sizes unchanged`,
+      `fixed ${updated.size} files, ${plan.length} boxes normalized -> family "${config.targetFont.family}"; sizes unchanged`,
     )
+  })
+
+  it('scopes the fix to only the selected presentations (宣召 + 读经)', async () => {
+    const raw = readFileSync(playlistPath!)
+    const before = await proEntries(raw)
+
+    const pl = await loadPlaylist(new Uint8Array(raw), 'test.proPlaylist')
+    const { files } = await buildDocs(pl)
+    const report = analyze(files)
+
+    // 宣召 lives in "1 5.pro" (the word is only in its slide text, not its name);
+    // 读经 is "7-1. 读经.pro". Both exist in the fixture.
+    const selectedFiles = ['1 5.pro', '7-1. 读经.pro']
+    for (const f of selectedFiles) {
+      expect(files.some((x) => x.name === f), `missing fixture entry: ${f}`).toBe(true)
+    }
+
+    const config = { ...defaultConfig(report), selectedFiles }
+    const { buildPlan } = await import('../src/lib/analyzer')
+    const plan = buildPlan(files, config)
+    expect(plan.length).toBeGreaterThan(0)
+    // every edit belongs to a selected file
+    expect([...new Set(plan.map((e) => e.file))].sort()).toEqual([...selectedFiles].sort())
+
+    applyPlan(plan)
+    const updated = serializeChangedDocs(files, plan)
+    const outBlob = await savePlaylist(pl, updated)
+    const after = await proEntries(outBlob)
+
+    // Only the selected .pro documents may differ; everything else is byte-identical.
+    for (const [name, bytes] of before) {
+      if (selectedFiles.includes(name)) continue
+      expect(bytesEqual(after.get(name)!, bytes), `unselected entry changed: ${name}`).toBe(true)
+    }
+    // The selected documents actually changed.
+    for (const name of selectedFiles) {
+      expect(bytesEqual(after.get(name)!, before.get(name)!), `selected entry unchanged: ${name}`).toBe(
+        false,
+      )
+    }
   })
 })

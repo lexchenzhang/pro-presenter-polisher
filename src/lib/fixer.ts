@@ -35,7 +35,11 @@ export async function buildDocs(pl: LoadedPlaylist): Promise<BuildDocsResult> {
   return { files, failed }
 }
 
-/** The safe default: remap the brand font to a Mac font + fix family metadata, keep sizes. */
+/**
+ * The safe default: unify the content font onto the brand font + fix family
+ * metadata, keep sizes. Nothing is selected yet — the user ticks which
+ * presentations to process (e.g. 宣召 / 读经), so the fix is scoped, not global.
+ */
 export function defaultConfig(report: PlaylistReport): FixConfig {
   return {
     sourcePsNames: report.sourcePsNames.slice(0, 1),
@@ -44,6 +48,7 @@ export function defaultConfig(report: PlaylistReport): FixConfig {
     fixFamilyMeta: true,
     sizePolicy: 'keep',
     globalSize: 165,
+    selectedFiles: [],
   }
 }
 

@@ -1,5 +1,5 @@
-import { MAC_CJK_FONTS } from '../lib/fonts'
-import type { FixConfig, PlaylistReport, SizePolicy } from '../lib/analyzer'
+import { FONT_OPTIONS } from '../lib/fonts'
+import type { FixConfig, PlaylistReport, PresentationInfo, SizePolicy } from '../lib/analyzer'
 
 const SIZE_POLICIES: { value: SizePolicy; label: string; hint: string }[] = [
   { value: 'keep', label: '保持字号不变', hint: '推荐 — 只统一字体，字号原样保留' },
@@ -7,6 +7,13 @@ const SIZE_POLICIES: { value: SizePolicy; label: string; hint: string }[] = [
   { value: 'file-mode', label: '每篇取众数', hint: '注意：可能压平同文件里本该不同的框' },
   { value: 'global', label: '全部统一为固定字号', hint: '整个 playlist 的主文本用同一字号' },
 ]
+
+// Segments the user typically fixes; used only to *highlight* and to power the
+// "quick-tick" button — never to auto-select on load (the user picks manually).
+const KEYWORDS = ['宣召', '读经']
+function matchesKeyword(p: PresentationInfo): boolean {
+  return KEYWORDS.some((k) => p.name.includes(k) || p.preview.includes(k))
+}
 
 export default function ConfigPanel({
   config,
@@ -30,9 +37,92 @@ export default function ConfigPanel({
     })
   }
 
+  // ---- presentation selection ----
+  const selected = config.selectedFiles ?? []
+  const selectedSet = new Set(selected)
+  function toggleFile(file: string) {
+    set({
+      selectedFiles: selectedSet.has(file) ? selected.filter((f) => f !== file) : [...selected, file],
+    })
+  }
+  function selectAll() {
+    set({ selectedFiles: report.presentations.map((p) => p.file) })
+  }
+  function clearAll() {
+    set({ selectedFiles: [] })
+  }
+  function selectKeywordMatches() {
+    const add = report.presentations.filter(matchesKeyword).map((p) => p.file)
+    set({ selectedFiles: [...new Set([...selected, ...add])] })
+  }
+  const hasKeywordMatch = report.presentations.some(matchesKeyword)
+
   return (
     <div className="space-y-6 rounded-xl border border-slate-200 bg-white p-5">
       <h2 className="text-base font-semibold text-slate-800">修复选项</h2>
+
+      {/* 选择要处理的篇目 */}
+      <section className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="text-sm font-medium text-slate-700">
+            选择要处理的篇目
+            <span className="ml-2 text-xs font-normal text-slate-400">
+              已选 {selected.length} / {report.presentations.length}
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-2 text-xs">
+            {hasKeywordMatch && (
+              <button
+                onClick={selectKeywordMatches}
+                className="rounded-md bg-indigo-50 px-2 py-1 font-medium text-indigo-700 hover:bg-indigo-100"
+              >
+                快速勾选：宣召 / 读经
+              </button>
+            )}
+            <button onClick={selectAll} className="rounded-md px-2 py-1 text-slate-500 hover:bg-slate-100">
+              全选
+            </button>
+            <button onClick={clearAll} className="rounded-md px-2 py-1 text-slate-500 hover:bg-slate-100">
+              全不选
+            </button>
+          </div>
+        </div>
+        <p className="text-xs text-slate-400">
+          只有勾选的篇目会被修改，其余保持不动。「宣召」等篇名看不出来时，可看右侧文字预览确认。
+        </p>
+        <div className="max-h-72 divide-y divide-slate-100 overflow-y-auto rounded-lg border border-slate-200">
+          {report.presentations.map((p) => {
+            const isKeyword = matchesKeyword(p)
+            return (
+              <label
+                key={p.file}
+                className="flex cursor-pointer items-start gap-3 px-3 py-2 text-sm hover:bg-slate-50"
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedSet.has(p.file)}
+                  onChange={() => toggleFile(p.file)}
+                  className="mt-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600"
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-2">
+                    <span className="font-medium text-slate-700">{p.name}</span>
+                    {isKeyword && (
+                      <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
+                        宣召/读经
+                      </span>
+                    )}
+                    <span className="text-[10px] text-slate-400">{p.contentBoxes} 个文本框</span>
+                  </span>
+                  {p.preview && (
+                    <span className="mt-0.5 block truncate text-xs text-slate-400">{p.preview}</span>
+                  )}
+                </span>
+              </label>
+            )
+          })}
+        </div>
+      </section>
 
       {/* 字体 */}
       <section className="space-y-3">
@@ -43,18 +133,18 @@ export default function ConfigPanel({
             onChange={(e) => set({ remapFont: e.target.checked })}
             className="h-4 w-4 rounded border-slate-300 text-indigo-600"
           />
-          统一字体为 Mac 系统字体
+          统一正文字体为
         </label>
         {config.remapFont && (
           <select
             value={config.targetFont.ps}
             onChange={(e) => {
-              const f = MAC_CJK_FONTS.find((x) => x.ps === e.target.value)
+              const f = FONT_OPTIONS.find((x) => x.ps === e.target.value)
               if (f) set({ targetFont: f })
             }}
             className="ml-6 w-full max-w-md rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
           >
-            {MAC_CJK_FONTS.map((f) => (
+            {FONT_OPTIONS.map((f) => (
               <option key={f.ps} value={f.ps}>
                 {f.label}
               </option>

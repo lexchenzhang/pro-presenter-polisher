@@ -25,7 +25,7 @@ import {
   type Wire,
 } from './protobuf'
 import { canonicalFamily, type FontOption } from './fonts'
-import { patchRtfFontName, patchRtfSize } from './rtf'
+import { patchRtfFontName, patchRtfSize, rtfPlainText } from './rtf'
 
 // ---------------------------------------------------------------------------
 // mutable tree
@@ -375,4 +375,10 @@ export function boxSize(box: TextBox): number | null {
 /** The box's representative font (most common PostScript name). */
 export function boxFont(box: TextBox): FontDescriptor | null {
   return box.descriptors[0] ?? null
+}
+
+/** Best-effort readable text of the box (for identifying slides in the UI). */
+export function boxText(box: TextBox): string {
+  if (!box.rtfNode) return ''
+  return rtfPlainText(utf8Decode(box.rtfNode.value as Uint8Array))
 }
